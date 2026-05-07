@@ -59,6 +59,20 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
 
+                    "getStatus" -> {
+                        result.success(
+                            mapOf(
+                                "state" to (prefs.getString("status_state", "idle") ?: "idle"),
+                                "message" to (prefs.getString("status_message", "Waiting for first check.") ?: ""),
+                                "statusTime" to prefs.getLong("status_time", 0L).toString(),
+                                "lastCheckTime" to prefs.getLong("last_check_time", 0L).toString(),
+                                "downloadProgress" to prefs.getInt("download_progress", -1),
+                                "lastInstalledVersion" to (prefs.getString("last_installed_version", "") ?: ""),
+                                "log" to (prefs.getString("status_log", "[]") ?: "[]"),
+                            )
+                        )
+                    }
+
                     else -> result.notImplemented()
                 }
             }
