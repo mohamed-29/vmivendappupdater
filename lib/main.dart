@@ -429,6 +429,19 @@ class _ConfigScreenState extends State<ConfigScreen> {
   String _feedback = '';
   bool _isError = false;
   bool _busy = false;
+  int _intervalMinutes = 360; // default 6 hours
+
+  // Interval options: value in minutes → display label
+  static const Map<int, String> _intervalOptions = {
+    15: '15 minutes',
+    30: '30 minutes',
+    60: '1 hour',
+    120: '2 hours',
+    180: '3 hours',
+    360: '6 hours',
+    720: '12 hours',
+    1440: '24 hours',
+  };
 
   @override
   void initState() {
@@ -453,6 +466,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
           _downloadUrlCtrl.text = (config['downloadUrl'] as String?) ?? '';
           _packageCtrl.text = (config['packageName'] as String?) ?? '';
           _savedHash = (config['savedHash'] as String?) ?? '';
+          _intervalMinutes = (config['checkIntervalMinutes'] as int?) ?? 360;
         });
       }
     } catch (_) {}
@@ -477,9 +491,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
         'checkUrl': url,
         'packageName': pkg,
         'downloadUrl': _downloadUrlCtrl.text.trim(),
+        'checkIntervalMinutes': _intervalMinutes,
       });
       setState(() {
-        _feedback = 'Saved. Background check scheduled every 6 hours.';
+        _feedback = 'Saved. Background check scheduled every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'}.';
         _isError = false;
       });
     } catch (e) {
@@ -557,6 +572,33 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 }
               },
             ),
+            const SizedBox(height: 14),
+            // ── Check interval dropdown ──
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Check Interval',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                isDense: true,
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: _intervalOptions.containsKey(_intervalMinutes) ? _intervalMinutes : 360,
+                  isExpanded: true,
+                  isDense: true,
+                  style: const TextStyle(fontSize: 14, color: Colors.black87),
+                  items: _intervalOptions.entries.map((e) {
+                    return DropdownMenuItem<int>(
+                      value: e.key,
+                      child: Text(e.value),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) setState(() => _intervalMinutes = val);
+                  },
+                ),
+              ),
+            ),
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _busy ? null : _save,
@@ -627,7 +669,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ],
             const SizedBox(height: 24),
             Text(
-              'Check runs every 6 hours when network is available.\n'
+              'Check runs every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'} when network is available.\n'
               'Install is silent via root — no prompt after first Magisk grant.\n'
               'Open the Status tab to watch live progress.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade400, height: 1.6),

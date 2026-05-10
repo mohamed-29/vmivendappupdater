@@ -111,6 +111,12 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         setStatus(STATE_INSTALLING, "Installing update via root…")
         log("Running: pm install -r ${apkFile.absolutePath}")
 
+        // Show the "Installing Update" screen BEFORE the install so users see our
+        // progress screen instead of the Android default launcher when IvendApp gets killed
+        log("Showing update progress screen…")
+        rootExec("am start -n com.example.vmivendappupdater/.UpdateProgressActivity --activity-new-task --activity-clear-top")
+        Thread.sleep(1000) // give the activity time to appear
+
         val installed = RootInstaller.install(apkFile.absolutePath)
         apkFile.delete()
 
@@ -203,11 +209,55 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     private fun launchApp(packageName: String) {
-        runCatching {
-            val intent = applicationContext.packageManager
-                .getLaunchIntentForPackage(packageName) ?: return
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            applicationContext.startActivity(intent)
+        // Give the system time to register the updated package after pm install
+        log("Waiting 10s for package registration…")
+        Thread.sleep(10000)
+
+        // On Android 12+, startActivity() from a background WorkManager worker is blocked.
+        // Since the device is rooted, we use `su` shell commands to launch the app.
+        // Multiple strategies with fallbacks:
+
+        // Strategy 1: `monkey` — the most reliable way to force-launch any app via root
+        log("Launch attempt 1: monkey -p $packageName")
+        val r1 = rootExec("monkey -p $packageName -c android.intent.category.LAUNCHER 1")
+        log("monkey result: $r1")
+
+        if ("error" in r1.lowercase() || "exception" in r1.lowercase() || r1.isBlank()) {
+            // Strategy 2: `am start` targeting the specific package activity
+            log("Launch attempt 2: am start -n $packageName/.MainActivity")
+            val r2 = rootExec("am start -n $packageName/.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-clear-top --activity-new-task")
+            log("am start result: $r2")
+        }
+
+        // Strategy 3: always also press HOME — since IvendApp is the home launcher,
+        // this ensures it comes to the foreground
+        Thread.sleep(2000)
+        log("Launch attempt 3: HOME key press")
+        val r3 = rootExec("input keyevent 3")
+        log("HOME key result: $r3")
+    }
+
+    private fun rootExec(command: String): String {
+        return try {
+            val process = ProcessBuilder("su")
+                .redirectErrorStream(true)
+                .start()
+            java.io.DataOutputStream(process.outputStream).use { os ->
+                os.writeBytes("$command\n")
+                os.writeBytes("exit\n")
+                os.flush()
+            }
+            val output = process.inputStream.use { String(it.readBytes()).trim() }
+            val finished = process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                "TIMEOUT"
+            } else {
+                val exit = process.exitValue()
+                if (output.isNotEmpty()) "$output (exit=$exit)" else "exit=$exit"
+            }
+        } catch (e: Exception) {
+            "EXCEPTION: ${e.message}"
         }
     }
 

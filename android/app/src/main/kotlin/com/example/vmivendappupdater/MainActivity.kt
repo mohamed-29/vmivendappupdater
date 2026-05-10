@@ -22,12 +22,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "saveConfig" -> {
+                        val intervalMin = (call.argument<Int>("checkIntervalMinutes") ?: 360)
                         prefs.edit()
                             .putString("check_url", call.argument<String>("checkUrl") ?: "")
                             .putString("target_package", call.argument<String>("packageName") ?: "")
                             .putString("download_url", call.argument<String>("downloadUrl") ?: "")
+                            .putInt("check_interval_minutes", intervalMin)
                             .apply()
                         scheduleUpdates(this)
+                        UpdateForegroundService.start(this)
                         result.success(true)
                     }
 
@@ -38,6 +41,7 @@ class MainActivity : FlutterActivity() {
                                 "packageName" to (prefs.getString("target_package", "") ?: ""),
                                 "downloadUrl" to (prefs.getString("download_url", "") ?: ""),
                                 "savedHash" to (prefs.getString("saved_hash", "") ?: ""),
+                                "checkIntervalMinutes" to prefs.getInt("check_interval_minutes", 360),
                             )
                         )
                     }

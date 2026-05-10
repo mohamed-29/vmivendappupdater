@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:label="vmivendappupdater"
@@ -28,11 +29,38 @@
             </intent-filter>
         </activity>
 
+        <!-- Transparent trampoline: starts foreground service on boot (Android 12+ workaround) -->
+        <activity
+            android:name=".ServiceStarterActivity"
+            android:exported="false"
+            android:theme="@style/TransparentTheme"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
+        <!-- Full-screen "Installing Update" screen shown during pm install -->
+        <activity
+            android:name=".UpdateProgressActivity"
+            android:exported="false"
+            android:theme="@style/UpdateProgressTheme"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
+        <!-- Foreground service to keep the updater alive -->
+        <service
+            android:name=".UpdateForegroundService"
+            android:exported="false" />
+
+        <!-- Start on boot and when the updater itself gets updated -->
         <receiver
             android:name=".BootReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
