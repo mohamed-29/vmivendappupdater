@@ -64,6 +64,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Receives broadcast from iVendApp to trigger an update check without opening UI -->
+        <receiver
+            android:name=".CheckUpdateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.vmivendappupdater.CHECK_UPDATE" />
+            </intent-filter>
+        </receiver>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

@@ -73,6 +73,7 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             setStatus(STATE_UP_TO_DATE, "App is up to date.")
             log("Hash matches — no update needed.")
             prefs.edit().putLong("last_check_time", System.currentTimeMillis()).apply()
+            launchApp(packageName, false)
             return@withContext Result.success()
         }
 
@@ -140,7 +141,7 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         setStatus(STATE_UPDATED, "Update installed!${if (installedVersion.isNotEmpty()) " v$installedVersion" else ""} Relaunching app…")
         log("Install successful! Relaunching $packageName")
 
-        launchApp(packageName)
+        launchApp(packageName, true)
         Result.success()
     }
 
@@ -208,10 +209,12 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun launchApp(packageName: String) {
-        // Give the system time to register the updated package after pm install
-        log("Waiting 10s for package registration…")
-        Thread.sleep(10000)
+    private fun launchApp(packageName: String, isAfterInstall: Boolean = true) {
+        if (isAfterInstall) {
+            // Give the system time to register the updated package after pm install
+            log("Waiting 10s for package registration…")
+            Thread.sleep(10000)
+        }
 
         // On Android 12+, startActivity() from a background WorkManager worker is blocked.
         // Since the device is rooted, we use `su` shell commands to launch the app.

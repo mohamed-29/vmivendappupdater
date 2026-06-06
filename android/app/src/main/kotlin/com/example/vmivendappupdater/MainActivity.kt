@@ -80,5 +80,18 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Check for updates immediately on launch if configured
+        val checkUrl = prefs.getString("check_url", "") ?: ""
+        if (checkUrl.isNotEmpty()) {
+            val request = OneTimeWorkRequestBuilder<UpdateWorker>()
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+            WorkManager.getInstance(this).enqueue(request)
+        }
     }
 }
