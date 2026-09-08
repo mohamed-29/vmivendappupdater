@@ -17,6 +17,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -25,6 +26,10 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(300, TimeUnit.SECONDS)
             .build()
+        private val workerRunning = AtomicBoolean(false)
+        private const val MAX_ATTEMPTS = 3
+        const val KEY_IGNORE_COOLDOWN = "ignore_retry_cooldown"
+        const val PREF_RETRY_BLOCKED_UNTIL = "retry_blocked_until"
 
         const val STATE_IDLE = "idle"
         const val STATE_CHECKING = "checking"
@@ -40,14 +45,31 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         applicationContext.getSharedPreferences("updater_prefs", Context.MODE_PRIVATE)
     }
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result {
+        if (!workerRunning.compareAndSet(false, true)) {
+            return Result.success()
+        }
+        return try {
+            withContext(Dispatchers.IO) { runUpdateCycle() }
+        } finally {
+            workerRunning.set(false)
+        }
+    }
+
+    private fun runUpdateCycle(): Result {
+        val blockedUntil = prefs.getLong(PREF_RETRY_BLOCKED_UNTIL, 0L)
+        val ignoreCooldown = inputData.getBoolean(KEY_IGNORE_COOLDOWN, false)
+        if (!ignoreCooldown && System.currentTimeMillis() < blockedUntil) {
+            return Result.success()
+        }
+
         val checkUrl = prefs.getString("check_url", "") ?: ""
         val packageName = prefs.getString("target_package", "") ?: ""
         val savedHash = prefs.getString("saved_hash", "") ?: ""
 
         if (checkUrl.isEmpty() || packageName.isEmpty()) {
             setStatus(STATE_ERROR, "Not configured — open app and set Check URL and Package Name.")
-            return@withContext Result.success()
+            return Result.success()
         }
 
         setStatus(STATE_CHECKING, "Checking for updates…")
@@ -58,13 +80,13 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         } catch (e: Exception) {
             setStatus(STATE_ERROR, "Server unreachable: ${e.message}")
             log("Error: ${e.message}")
-            return@withContext Result.retry()
+            return retryOrStop("Server unreachable: ${e.message}", "Server check failed: ${e.message}")
         }
 
         if (serverHash.isEmpty()) {
             setStatus(STATE_ERROR, "Server returned empty hash.")
             log("Error: empty hash in server response")
-            return@withContext Result.retry()
+            return retryOrStop("Server returned empty hash.", "Server check failed: empty hash")
         }
 
         log("Server hash: ${serverHash.take(16)}…")
@@ -72,40 +94,60 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         if (serverHash == savedHash) {
             setStatus(STATE_UP_TO_DATE, "App is up to date.")
             log("Hash matches — no update needed.")
-            prefs.edit().putLong("last_check_time", System.currentTimeMillis()).apply()
+            prefs.edit()
+                .putLong("last_check_time", System.currentTimeMillis())
+                .remove(PREF_RETRY_BLOCKED_UNTIL)
+                .apply()
             launchApp(packageName, false)
-            return@withContext Result.success()
+            return Result.success()
         }
 
         log("New hash detected — starting download.")
         setStatus(STATE_DOWNLOADING, "Downloading update…", progress = 0)
 
         val apkFile = File(applicationContext.filesDir, "update.apk")
+        val partialFile = File(applicationContext.filesDir, "update.apk.part")
+        apkFile.delete()
+        partialFile.delete()
         val downloaded = try {
-            downloadApk(downloadUrl.ifEmpty { checkUrl }, apkFile)
+            downloadApk(downloadUrl.ifEmpty { checkUrl }, partialFile)
         } catch (e: Exception) {
-            apkFile.delete()
+            partialFile.delete()
             setStatus(STATE_ERROR, "Download failed: ${e.message}")
             log("Download error: ${e.message}")
-            return@withContext Result.retry()
+            return retryOrStop("Download failed: ${e.message}", "Download error: ${e.message}")
         }
 
         if (!downloaded) {
-            apkFile.delete()
+            partialFile.delete()
             setStatus(STATE_ERROR, "Download failed — bad server response.")
             log("Download failed: non-2xx or empty body")
-            return@withContext Result.retry()
+            return retryOrStop("Download failed: bad server response.", "Download failed: non-2xx or empty body")
         }
 
         setStatus(STATE_VERIFYING, "Verifying file integrity…")
         log("Verifying SHA-256…")
-        val fileHash = sha256(apkFile)
+        val fileHash = sha256(partialFile)
 
         if (fileHash != serverHash) {
-            apkFile.delete()
+            partialFile.delete()
             setStatus(STATE_ERROR, "Hash mismatch — corrupted download. Will retry.")
             log("Hash mismatch! Expected ${serverHash.take(16)}… got ${fileHash.take(16)}…")
-            return@withContext Result.retry()
+            return retryOrStop("Hash mismatch: corrupted download.", "Hash mismatch! Expected ${serverHash.take(16)} got ${fileHash.take(16)}")
+        }
+
+        if (!partialFile.renameTo(apkFile)) {
+            try {
+                partialFile.copyTo(apkFile, overwrite = true)
+                partialFile.delete()
+            } catch (e: Exception) {
+                apkFile.delete()
+                partialFile.delete()
+                return retryOrStop(
+                    "Could not finalize downloaded APK: ${e.message}",
+                    "APK finalize failed: ${e.message}"
+                )
+            }
         }
 
         log("Hash verified ✓")
@@ -124,12 +166,13 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         if (!installed) {
             setStatus(STATE_ERROR, "Installation failed — check root permissions.")
             log("pm install returned non-zero exit code.")
-            return@withContext Result.retry()
+            return retryOrStop("Installation failed: check root permissions.", "pm install returned non-zero exit code")
         }
 
         prefs.edit()
             .putString("saved_hash", serverHash)
             .putLong("last_check_time", System.currentTimeMillis())
+            .remove(PREF_RETRY_BLOCKED_UNTIL)
             .commit()
 
         // Read version from server response if available (stored during fetchHashInfo)
@@ -142,7 +185,33 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         log("Install successful! Relaunching $packageName")
 
         launchApp(packageName, true)
-        Result.success()
+        return Result.success()
+    }
+
+    private fun retryOrStop(message: String, logMessage: String): Result {
+        val completedAttempt = runAttemptCount + 1
+        return if (completedAttempt < MAX_ATTEMPTS) {
+            val nextAttempt = completedAttempt + 1
+            val delayMinutes = 1L shl runAttemptCount.coerceAtMost(10)
+            setStatus(
+                STATE_ERROR,
+                "$message Retry $nextAttempt/$MAX_ATTEMPTS in about ${delayMinutes}m."
+            )
+            log("$logMessage; retry $nextAttempt/$MAX_ATTEMPTS scheduled")
+            Result.retry()
+        } else {
+            val intervalMinutes = prefs.getInt("check_interval_minutes", 360)
+                .coerceIn(15, 1440)
+            val blockedUntil = System.currentTimeMillis() +
+                TimeUnit.MINUTES.toMillis(intervalMinutes.toLong())
+            prefs.edit().putLong(PREF_RETRY_BLOCKED_UNTIL, blockedUntil).commit()
+            setStatus(
+                STATE_ERROR,
+                "$message Automatic retries stopped after $MAX_ATTEMPTS attempts; next scheduled cycle in ${intervalMinutes}m."
+            )
+            log("$logMessage; automatic retries stopped after $MAX_ATTEMPTS attempts")
+            Result.failure()
+        }
     }
 
     private fun fetchHashInfo(url: String): Pair<String, String> {

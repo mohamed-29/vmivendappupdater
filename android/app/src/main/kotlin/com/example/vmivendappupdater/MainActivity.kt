@@ -1,10 +1,6 @@
 package com.example.vmivendappupdater
 
 import android.content.Context
-import androidx.work.Constraints
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,6 +13,8 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
 
         val prefs = getSharedPreferences("updater_prefs", Context.MODE_PRIVATE)
+        migrateLegacyWorkQueue(this)
+        scheduleUpdates(this)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
@@ -47,19 +45,15 @@ class MainActivity : FlutterActivity() {
                     }
 
                     "checkNow" -> {
-                        val request = OneTimeWorkRequestBuilder<UpdateWorker>()
-                            .setConstraints(
-                                Constraints.Builder()
-                                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                                    .build()
-                            )
-                            .build()
-                        WorkManager.getInstance(this).enqueue(request)
+                        enqueueImmediateUpdate(this, ignoreCooldown = true)
                         result.success(true)
                     }
 
                     "clearHash" -> {
-                        prefs.edit().remove("saved_hash").apply()
+                        prefs.edit()
+                            .remove("saved_hash")
+                            .remove(UpdateWorker.PREF_RETRY_BLOCKED_UNTIL)
+                            .apply()
                         result.success(true)
                     }
 
@@ -84,14 +78,7 @@ class MainActivity : FlutterActivity() {
         // Check for updates immediately on launch if configured
         val checkUrl = prefs.getString("check_url", "") ?: ""
         if (checkUrl.isNotEmpty()) {
-            val request = OneTimeWorkRequestBuilder<UpdateWorker>()
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build()
-                )
-                .build()
-            WorkManager.getInstance(this).enqueue(request)
+            enqueueImmediateUpdate(this)
         }
     }
 }
