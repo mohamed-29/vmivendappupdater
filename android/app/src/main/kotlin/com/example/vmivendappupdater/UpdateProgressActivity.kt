@@ -1,10 +1,9 @@
 package com.example.vmivendappupdater
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import android.graphics.Color
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
@@ -17,12 +16,16 @@ import android.widget.TextView
  * This prevents the Android default launcher from showing when the target app
  * (IvendApp) is killed during installation.
  *
- * Auto-finishes after 60 seconds as a safety net.
+ * Stays visible until the guardian restores iVend, including failed reinstalls.
  */
-class UpdateProgressActivity : Activity() {
+class UpdateProgressActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Covers both legacy back buttons and predictive back gestures.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { /* Keep the recovery screen visible. */ }
+        })
 
         // Keep screen on during update
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -36,7 +39,7 @@ class UpdateProgressActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "Installing Update"
+            text = "Restoring iVend"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             gravity = Gravity.CENTER
@@ -69,11 +72,8 @@ class UpdateProgressActivity : Activity() {
 
         setContentView(layout)
 
-        // Safety net: auto-finish after 60 seconds in case something goes wrong
-        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 60_000)
+        // Remain visible if reinstall fails. The guardian brings iVend forward
+        // once it is installed again; finishing on a timer exposes Android Home.
     }
 
-    override fun onBackPressed() {
-        // Block back button during update
-    }
 }

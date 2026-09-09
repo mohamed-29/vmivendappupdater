@@ -8,13 +8,20 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * Lightweight foreground service that keeps the updater process alive.
  * The actual update work is handled by WorkManager's periodic UpdateWorker.
- * This service simply prevents Android from killing the process.
+ * The foreground notification improves process priority; Android may still kill
+ * the service. START_STICKY requests a restart but is not an absolute guarantee.
  */
 class UpdateForegroundService : Service() {
+
+    private val guardianExecutor = Executors.newSingleThreadScheduledExecutor()
+    private var guardianTask: ScheduledFuture<*>? = null
 
     companion object {
         private const val CHANNEL_ID = "updater_service_channel"
@@ -35,14 +42,32 @@ class UpdateForegroundService : Service() {
         createNotificationChannel()
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
+        guardianTask = guardianExecutor.scheduleWithFixedDelay(
+            { IvendKioskGuardian.enforce(this, "background health check") },
+            0,
+            2,
+            TimeUnit.SECONDS
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // START_STICKY ensures Android restarts the service if it gets killed
+        // Request a restart after process reclamation (not after force-stop).
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Removing the updater task must not reveal the Android launcher.
+        guardianExecutor.execute { IvendKioskGuardian.enforce(this, "updater task removed", force = true) }
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onDestroy() {
+        guardianTask?.cancel(true)
+        guardianExecutor.shutdownNow()
+        super.onDestroy()
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

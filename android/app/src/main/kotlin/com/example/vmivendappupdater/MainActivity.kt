@@ -15,15 +15,29 @@ class MainActivity : FlutterActivity() {
         val prefs = getSharedPreferences("updater_prefs", Context.MODE_PRIVATE)
         migrateLegacyWorkQueue(this)
         scheduleUpdates(this)
+        // An administrator can still open this configuration screen. Kiosk
+        // enforcement resumes automatically after this short, bounded window.
+        IvendKioskGuardian.beginMaintenance(this, durationMs = 5 * 60 * 1000L)
+        UpdateForegroundService.start(this)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "saveConfig" -> {
-                        val intervalMin = (call.argument<Int>("checkIntervalMinutes") ?: 360)
+                        val intervalMin = (call.argument<Int>("checkIntervalMinutes") ?: 360).coerceIn(15, 1440)
+                        val targetName = call.argument<String>("packageName")?.trim().orEmpty()
+                        if (targetName.isEmpty() || targetName.length > 200) {
+                            result.error(
+                                "invalid_target_name",
+                                "Enter a target version name.",
+                                null
+                            )
+                            return@setMethodCallHandler
+                        }
                         prefs.edit()
                             .putString("check_url", call.argument<String>("checkUrl") ?: "")
-                            .putString("target_package", call.argument<String>("packageName") ?: "")
+                            .putString("target_name", targetName)
+                            .putString("target_package", ManagedTarget.DEFAULT_PACKAGE)
                             .putString("download_url", call.argument<String>("downloadUrl") ?: "")
                             .putInt("check_interval_minutes", intervalMin)
                             .apply()
@@ -36,7 +50,7 @@ class MainActivity : FlutterActivity() {
                         result.success(
                             mapOf(
                                 "checkUrl" to (prefs.getString("check_url", "") ?: ""),
-                                "packageName" to (prefs.getString("target_package", "") ?: ""),
+                                "packageName" to ManagedTarget.targetName(this),
                                 "downloadUrl" to (prefs.getString("download_url", "") ?: ""),
                                 "savedHash" to (prefs.getString("saved_hash", "") ?: ""),
                                 "checkIntervalMinutes" to prefs.getInt("check_interval_minutes", 360),
@@ -67,6 +81,7 @@ class MainActivity : FlutterActivity() {
                                 "downloadProgress" to prefs.getInt("download_progress", -1),
                                 "lastInstalledVersion" to (prefs.getString("last_installed_version", "") ?: ""),
                                 "log" to (prefs.getString("status_log", "[]") ?: "[]"),
+                                "crashLog" to (prefs.getString("ivend_crash_log", "[]") ?: "[]"),
                             )
                         )
                     }

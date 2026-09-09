@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 const _channel = MethodChannel('com.example.vmivendappupdater/updater');
-const String _checkBaseUrl = 'https://machine.ivend.cloud/api/v1/updates/check/';
 
 void main() {
   runApp(const UpdaterApp());
@@ -45,10 +44,7 @@ class _UpdaterHomeState extends State<UpdaterHome> {
     return Scaffold(
       body: IndexedStack(
         index: _tab,
-        children: const [
-          StatusScreen(),
-          ConfigScreen(),
-        ],
+        children: const [StatusScreen(), ConfigScreen()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
@@ -147,8 +143,10 @@ class _StatusScreenState extends State<StatusScreen> {
             color: Theme.of(context).colorScheme.surface,
             child: Row(
               children: [
-                const Text('Live Status',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const Text(
+                  'Live Status',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                ),
                 const Spacer(),
                 // Live pulse dot when active
                 if (_isActive(state))
@@ -162,11 +160,14 @@ class _StatusScreenState extends State<StatusScreen> {
                   ),
                 if (_isActive(state)) const SizedBox(width: 6),
                 if (_isActive(state))
-                  Text('LIVE',
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: _stateColor(state))),
+                  Text(
+                    'LIVE',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: _stateColor(state),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -186,12 +187,19 @@ class _StatusScreenState extends State<StatusScreen> {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: Row(
               children: [
-                const Text('Activity Log',
-                    style:
-                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black54)),
+                const Text(
+                  'Activity Log',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black54,
+                  ),
+                ),
                 const Spacer(),
-                Text('Updates every 2s',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
+                Text(
+                  'Updates every 2s',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                ),
               ],
             ),
           ),
@@ -199,8 +207,14 @@ class _StatusScreenState extends State<StatusScreen> {
           Expanded(
             child: logs.isEmpty
                 ? Center(
-                    child: Text('No activity yet.',
-                        style: TextStyle(color: Colors.grey.shade400, fontSize: 13)))
+                    child: Text(
+                      'No activity yet.',
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 13,
+                      ),
+                    ),
+                  )
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     itemCount: logs.length,
@@ -226,8 +240,12 @@ class _StatusScreenState extends State<StatusScreen> {
                                 entry['m'] ?? '',
                                 style: TextStyle(
                                   fontSize: 13,
-                                  color: isFirst ? Colors.black87 : Colors.black54,
-                                  fontWeight: isFirst ? FontWeight.w500 : FontWeight.normal,
+                                  color: isFirst
+                                      ? Colors.black87
+                                      : Colors.black54,
+                                  fontWeight: isFirst
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
                                 ),
                               ),
                             ),
@@ -243,7 +261,10 @@ class _StatusScreenState extends State<StatusScreen> {
   }
 
   bool _isActive(String state) =>
-      state == 'checking' || state == 'downloading' || state == 'verifying' || state == 'installing';
+      state == 'checking' ||
+      state == 'downloading' ||
+      state == 'verifying' ||
+      state == 'installing';
 
   Color _stateColor(String state) {
     switch (state) {
@@ -296,9 +317,9 @@ class _StatusCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.07),
+        color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -308,11 +329,14 @@ class _StatusCard extends StatelessWidget {
               _icon(color),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(message,
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: color.withOpacity(0.9))),
+                child: Text(
+                  message,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: color.withValues(alpha: 0.9),
+                  ),
+                ),
               ),
             ],
           ),
@@ -323,21 +347,29 @@ class _StatusCard extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress / 100,
                 minHeight: 6,
-                backgroundColor: color.withOpacity(0.15),
+                backgroundColor: color.withValues(alpha: 0.15),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
             const SizedBox(height: 4),
-            Text('$progress%',
-                style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+            Text(
+              '$progress%',
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
-          if (state == 'checking' || state == 'verifying' || state == 'installing') ...[
+          if (state == 'checking' ||
+              state == 'verifying' ||
+              state == 'installing') ...[
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 minHeight: 6,
-                backgroundColor: color.withOpacity(0.15),
+                backgroundColor: color.withValues(alpha: 0.15),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
@@ -384,9 +416,18 @@ class _StatusCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(fontSize: 10, color: Colors.black38, fontWeight: FontWeight.w500)),
-        Text(value, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: Colors.black38,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 12, color: Colors.black54),
+        ),
       ],
     );
   }
@@ -405,7 +446,10 @@ class _Splash extends StatelessWidget {
         children: [
           CircularProgressIndicator(strokeWidth: 2),
           SizedBox(height: 16),
-          Text('Loading status…', style: TextStyle(color: Colors.black38, fontSize: 13)),
+          Text(
+            'Loading status…',
+            style: TextStyle(color: Colors.black38, fontSize: 13),
+          ),
         ],
       ),
     );
@@ -422,6 +466,8 @@ class ConfigScreen extends StatefulWidget {
 }
 
 class _ConfigScreenState extends State<ConfigScreen> {
+  static const _automaticCheckUrlPrefix =
+      'https://machine.ivend.cloud/api/v1/updates/check/';
   final _checkUrlCtrl = TextEditingController();
   final _downloadUrlCtrl = TextEditingController();
   final _packageCtrl = TextEditingController();
@@ -446,11 +492,24 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   void initState() {
     super.initState();
+    _packageCtrl.addListener(_updateAutomaticCheckUrl);
     _loadConfig();
+  }
+
+  void _updateAutomaticCheckUrl() {
+    final packageName = _packageCtrl.text.trim();
+    if (packageName.isEmpty) return;
+    final automaticUrl =
+        '$_automaticCheckUrlPrefix${Uri.encodeComponent(packageName)}/';
+    final current = _checkUrlCtrl.text.trim();
+    if (current.isEmpty || current.startsWith(_automaticCheckUrlPrefix)) {
+      _checkUrlCtrl.text = automaticUrl;
+    }
   }
 
   @override
   void dispose() {
+    _packageCtrl.removeListener(_updateAutomaticCheckUrl);
     _checkUrlCtrl.dispose();
     _downloadUrlCtrl.dispose();
     _packageCtrl.dispose();
@@ -459,12 +518,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   Future<void> _loadConfig() async {
     try {
-      final config = await _channel.invokeMapMethod<String, dynamic>('getConfig');
+      final config = await _channel.invokeMapMethod<String, dynamic>(
+        'getConfig',
+      );
       if (config != null && mounted) {
         setState(() {
           _checkUrlCtrl.text = (config['checkUrl'] as String?) ?? '';
           _downloadUrlCtrl.text = (config['downloadUrl'] as String?) ?? '';
           _packageCtrl.text = (config['packageName'] as String?) ?? '';
+          _updateAutomaticCheckUrl();
           _savedHash = (config['savedHash'] as String?) ?? '';
           _intervalMinutes = (config['checkIntervalMinutes'] as int?) ?? 360;
         });
@@ -477,7 +539,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final pkg = _packageCtrl.text.trim();
     if (url.isEmpty || pkg.isEmpty) {
       setState(() {
-        _feedback = 'Check URL and Package Name are required.';
+        _feedback = 'Check URL and Target Version Name are required.';
         _isError = true;
       });
       return;
@@ -493,11 +555,14 @@ class _ConfigScreenState extends State<ConfigScreen> {
         'downloadUrl': _downloadUrlCtrl.text.trim(),
         'checkIntervalMinutes': _intervalMinutes,
       });
+      if (!mounted) return;
       setState(() {
-        _feedback = 'Saved. Background check scheduled every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'}.';
+        _feedback =
+            'Saved. Background check scheduled every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'}.';
         _isError = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _feedback = 'Error: $e';
         _isError = true;
@@ -516,6 +581,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     try {
       await _channel.invokeMethod('checkNow');
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _feedback = 'Error: $e';
         _isError = true;
@@ -526,12 +592,21 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _forceUpdate() async {
-    await _channel.invokeMethod('clearHash');
-    setState(() {
-      _savedHash = '';
-      _feedback = 'Hash cleared — next check will force a fresh download.';
-      _isError = false;
-    });
+    try {
+      await _channel.invokeMethod('clearHash');
+      if (!mounted) return;
+      setState(() {
+        _savedHash = '';
+        _feedback = 'Hash cleared — next check will force a fresh download.';
+        _isError = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _feedback = 'Error: $e';
+        _isError = true;
+      });
+    }
   }
 
   @override
@@ -542,8 +617,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Configuration',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            const Text(
+              'Configuration',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 20),
             _field(
               controller: _checkUrlCtrl,
@@ -561,16 +638,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
             const SizedBox(height: 14),
             _field(
               controller: _packageCtrl,
-              label: 'Target Package Name *',
-              hint: 'com.example.kioskapp',
-              onChanged: (val) {
-                final trimmed = val.trim();
-                final current = _checkUrlCtrl.text;
-                if ((current.isEmpty || current.startsWith(_checkBaseUrl)) &&
-                    trimmed.isNotEmpty) {
-                  _checkUrlCtrl.text = '$_checkBaseUrl$trimmed/';
-                }
-              },
+              label: 'Target Version Name *',
+              hint: 'ivend.cloud',
             ),
             const SizedBox(height: 14),
             // ── Check interval dropdown ──
@@ -578,12 +647,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
               decoration: const InputDecoration(
                 labelText: 'Check Interval',
                 border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 isDense: true,
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<int>(
-                  value: _intervalOptions.containsKey(_intervalMinutes) ? _intervalMinutes : 360,
+                  value: _intervalOptions.containsKey(_intervalMinutes)
+                      ? _intervalMinutes
+                      : 360,
                   isExpanded: true,
                   isDense: true,
                   style: const TextStyle(fontSize: 14, color: Colors.black87),
@@ -625,18 +699,23 @@ class _ConfigScreenState extends State<ConfigScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: _isError
-                      ? Colors.red.shade50
-                      : Colors.green.shade50,
+                  color: _isError ? Colors.red.shade50 : Colors.green.shade50,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: _isError ? Colors.red.shade200 : Colors.green.shade200,
+                    color: _isError
+                        ? Colors.red.shade200
+                        : Colors.green.shade200,
                   ),
                 ),
-                child: Text(_feedback,
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: _isError ? Colors.red.shade700 : Colors.green.shade700)),
+                child: Text(
+                  _feedback,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: _isError
+                        ? Colors.red.shade700
+                        : Colors.green.shade700,
+                  ),
+                ),
               ),
             ],
             if (_savedHash.isNotEmpty) ...[
@@ -651,17 +730,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Saved hash',
-                        style: TextStyle(fontSize: 10, color: Colors.black38)),
+                    const Text(
+                      'Saved hash',
+                      style: TextStyle(fontSize: 10, color: Colors.black38),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       _savedHash.length > 24
                           ? '${_savedHash.substring(0, 24)}…'
                           : _savedHash,
                       style: const TextStyle(
-                          fontSize: 12,
-                          fontFamily: 'monospace',
-                          color: Colors.black54),
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: Colors.black54,
+                      ),
                     ),
                   ],
                 ),
@@ -671,8 +753,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
             Text(
               'Check runs every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'} when network is available.\n'
               'Install is silent via root — no prompt after first Magisk grant.\n'
+              'A confirmed install failure triggers uninstall and reinstall. This removes private iVend data.\n'
               'Open the Status tab to watch live progress.',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade400, height: 1.6),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade400,
+                height: 1.6,
+              ),
             ),
           ],
         ),
@@ -686,9 +773,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
     String hint = '',
     TextInputType keyboard = TextInputType.text,
     void Function(String)? onChanged,
+    bool enabled = true,
   }) {
     return TextField(
       controller: controller,
+      enabled: enabled,
       keyboardType: keyboard,
       autocorrect: false,
       onChanged: onChanged,
@@ -698,7 +787,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
         hintText: hint,
         hintStyle: const TextStyle(fontSize: 12),
         border: const OutlineInputBorder(),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
         isDense: true,
       ),
     );

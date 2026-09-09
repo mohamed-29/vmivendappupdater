@@ -1,8 +1,8 @@
 package com.example.vmivendappupdater
 
 import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import kotlinx.coroutines.CancellationException
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
@@ -13,9 +13,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -51,12 +48,18 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
         return try {
             withContext(Dispatchers.IO) { runUpdateCycle() }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            retryOrStop("Update interrupted: ${error.javaClass.simpleName}", "Update cycle failed: ${error.javaClass.simpleName}")
         } finally {
             workerRunning.set(false)
         }
     }
 
     private fun runUpdateCycle(): Result {
+        // Maintain iVend as the visible kiosk app even if an update check fails.
+        IvendKioskGuardian.enforce(applicationContext, "update check")
         val blockedUntil = prefs.getLong(PREF_RETRY_BLOCKED_UNTIL, 0L)
         val ignoreCooldown = inputData.getBoolean(KEY_IGNORE_COOLDOWN, false)
         if (!ignoreCooldown && System.currentTimeMillis() < blockedUntil) {
@@ -64,14 +67,13 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
 
         val checkUrl = prefs.getString("check_url", "") ?: ""
-        val packageName = prefs.getString("target_package", "") ?: ""
+        val packageName = ManagedTarget.packageName(applicationContext)
         val savedHash = prefs.getString("saved_hash", "") ?: ""
 
-        if (checkUrl.isEmpty() || packageName.isEmpty()) {
-            setStatus(STATE_ERROR, "Not configured — open app and set Check URL and Package Name.")
+        if (checkUrl.isEmpty()) {
+            setStatus(STATE_ERROR, "Not configured — open app and set Check URL.")
             return Result.success()
         }
-
         setStatus(STATE_CHECKING, "Checking for updates…")
         log("Contacting server: $checkUrl")
 
@@ -83,22 +85,19 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return retryOrStop("Server unreachable: ${e.message}", "Server check failed: ${e.message}")
         }
 
-        if (serverHash.isEmpty()) {
-            setStatus(STATE_ERROR, "Server returned empty hash.")
-            log("Error: empty hash in server response")
-            return retryOrStop("Server returned empty hash.", "Server check failed: empty hash")
+        if (!Regex("[a-fA-F0-9]{64}").matches(serverHash)) {
+            return retryOrStop("Server returned an invalid SHA-256.", "Server check failed: invalid checksum")
         }
 
         log("Server hash: ${serverHash.take(16)}…")
 
-        if (serverHash == savedHash) {
+        if (serverHash.equals(savedHash, ignoreCase = true) && isTargetInstalled(packageName)) {
             setStatus(STATE_UP_TO_DATE, "App is up to date.")
             log("Hash matches — no update needed.")
             prefs.edit()
                 .putLong("last_check_time", System.currentTimeMillis())
                 .remove(PREF_RETRY_BLOCKED_UNTIL)
                 .apply()
-            launchApp(packageName, false)
             return Result.success()
         }
 
@@ -107,67 +106,122 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         val apkFile = File(applicationContext.filesDir, "update.apk")
         val partialFile = File(applicationContext.filesDir, "update.apk.part")
-        apkFile.delete()
-        partialFile.delete()
-        val downloaded = try {
-            downloadApk(downloadUrl.ifEmpty { checkUrl }, partialFile)
-        } catch (e: Exception) {
+        val cachedVerified = apkFile.isFile && sha256(apkFile).equals(serverHash, ignoreCase = true)
+        if (!cachedVerified) {
+            apkFile.delete()
             partialFile.delete()
-            setStatus(STATE_ERROR, "Download failed: ${e.message}")
-            log("Download error: ${e.message}")
-            return retryOrStop("Download failed: ${e.message}", "Download error: ${e.message}")
-        }
-
-        if (!downloaded) {
-            partialFile.delete()
-            setStatus(STATE_ERROR, "Download failed — bad server response.")
-            log("Download failed: non-2xx or empty body")
-            return retryOrStop("Download failed: bad server response.", "Download failed: non-2xx or empty body")
-        }
-
-        setStatus(STATE_VERIFYING, "Verifying file integrity…")
-        log("Verifying SHA-256…")
-        val fileHash = sha256(partialFile)
-
-        if (fileHash != serverHash) {
-            partialFile.delete()
-            setStatus(STATE_ERROR, "Hash mismatch — corrupted download. Will retry.")
-            log("Hash mismatch! Expected ${serverHash.take(16)}… got ${fileHash.take(16)}…")
-            return retryOrStop("Hash mismatch: corrupted download.", "Hash mismatch! Expected ${serverHash.take(16)} got ${fileHash.take(16)}")
-        }
-
-        if (!partialFile.renameTo(apkFile)) {
-            try {
-                partialFile.copyTo(apkFile, overwrite = true)
-                partialFile.delete()
+            val downloaded = try {
+                downloadApk(downloadUrl.ifEmpty { checkUrl }, partialFile)
             } catch (e: Exception) {
-                apkFile.delete()
                 partialFile.delete()
-                return retryOrStop(
-                    "Could not finalize downloaded APK: ${e.message}",
-                    "APK finalize failed: ${e.message}"
-                )
+                setStatus(STATE_ERROR, "Download failed: ${e.message}")
+                log("Download error: ${e.message}")
+                return retryOrStop("Download failed: ${e.message}", "Download error: ${e.message}")
+            }
+
+            if (!downloaded) {
+                partialFile.delete()
+                setStatus(STATE_ERROR, "Download failed — bad server response.")
+                log("Download failed: non-2xx or empty body")
+                return retryOrStop("Download failed: bad server response.", "Download failed: non-2xx or empty body")
+            }
+
+            setStatus(STATE_VERIFYING, "Verifying file integrity…")
+            log("Verifying SHA-256…")
+            val fileHash = sha256(partialFile)
+
+            if (!fileHash.equals(serverHash, ignoreCase = true)) {
+                partialFile.delete()
+                setStatus(STATE_ERROR, "Hash mismatch — corrupted download. Will retry.")
+                log("Hash mismatch! Expected ${serverHash.take(16)}… got ${fileHash.take(16)}…")
+                return retryOrStop("Hash mismatch: corrupted download.", "Hash mismatch! Expected ${serverHash.take(16)} got ${fileHash.take(16)}")
+            }
+
+            if (!partialFile.renameTo(apkFile)) {
+                try {
+                    partialFile.copyTo(apkFile, overwrite = true)
+                    partialFile.delete()
+                } catch (e: Exception) {
+                    apkFile.delete()
+                    partialFile.delete()
+                    return retryOrStop(
+                        "Could not finalize downloaded APK: ${e.message}",
+                        "APK finalize failed: ${e.message}"
+                    )
+                }
             }
         }
 
         log("Hash verified ✓")
+        @Suppress("DEPRECATION")
+        val archiveFlags = if (android.os.Build.VERSION.SDK_INT >= 28) {
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+        val archive = applicationContext.packageManager.getPackageArchiveInfo(
+            apkFile.absolutePath,
+            archiveFlags
+        )
+        @Suppress("DEPRECATION")
+        val hasModernSignature = android.os.Build.VERSION.SDK_INT >= 28 &&
+            !archive?.signingInfo?.apkContentsSigners.isNullOrEmpty()
+        @Suppress("DEPRECATION")
+        val hasLegacySignature = !archive?.signatures.isNullOrEmpty()
+        val archiveMinSdk = archive?.applicationInfo?.minSdkVersion
+        val validationErrors = mutableListOf<String>()
+        if (archive == null) validationErrors += "Android could not parse the archive"
+        if (archive?.packageName != packageName) {
+            validationErrors += "package=${archive?.packageName ?: "unknown"}, expected=$packageName"
+        }
+        if (!hasModernSignature && !hasLegacySignature) validationErrors += "no signer metadata"
+        if (archiveMinSdk == null) {
+            validationErrors += "minimum SDK metadata missing"
+        } else if (archiveMinSdk > android.os.Build.VERSION.SDK_INT) {
+            validationErrors += "minimum API $archiveMinSdk exceeds device API ${android.os.Build.VERSION.SDK_INT}"
+        }
+        if (validationErrors.isNotEmpty()) {
+            apkFile.delete()
+            val reason = validationErrors.joinToString("; ")
+            return retryOrStop(
+                "Invalid or incompatible iVend APK: $reason.",
+                "APK validation failed: $reason; installed app retained."
+            )
+        }
         setStatus(STATE_INSTALLING, "Installing update via root…")
         log("Running: pm install -r ${apkFile.absolutePath}")
+        // Do not let the 10-second guardian heartbeat replace the controlled
+        // update screen while package-manager stops iVend.
+        IvendKioskGuardian.beginMaintenance(applicationContext, 6 * 60 * 1000L)
 
         // Show the "Installing Update" screen BEFORE the install so users see our
         // progress screen instead of the Android default launcher when IvendApp gets killed
-        log("Showing update progress screen…")
-        rootExec("am start -n com.example.vmivendappupdater/.UpdateProgressActivity --activity-new-task --activity-clear-top")
-        Thread.sleep(1000) // give the activity time to appear
-
-        val installed = RootInstaller.install(apkFile.absolutePath)
-        apkFile.delete()
-
-        if (!installed) {
-            setStatus(STATE_ERROR, "Installation failed — check root permissions.")
-            log("pm install returned non-zero exit code.")
-            return retryOrStop("Installation failed: check root permissions.", "pm install returned non-zero exit code")
+        val outcome = try {
+            log("Showing update progress screen…")
+            val cover = RootShell.run("am start -W -n com.example.vmivendappupdater/.UpdateProgressActivity -f 0x14000000")
+            if (!cover.succeeded || cover.output.contains("Error:")) {
+                return retryOrStop("Could not open recovery screen.", "Install deferred: recovery screen unavailable.")
+            }
+            RootInstaller.install(apkFile.absolutePath, packageName, ::log)
+        } finally {
+            IvendKioskGuardian.endMaintenance(applicationContext, "install attempt")
         }
+
+        val targetStillInstalled = isTargetInstalled(packageName)
+        if (outcome !in listOf(InstallRecovery.Outcome.UPDATED, InstallRecovery.Outcome.REINSTALLED) || !targetStillInstalled) {
+            if (!targetStillInstalled) {
+                CriticalEventQueue.enqueue(
+                    applicationContext,
+                    "update_left_app_missing",
+                    "Update recovery ended with $outcome and $packageName is not installed."
+                )
+                DiagnosticLogUploader.uploadPending(applicationContext)
+            }
+            // Retain the validated replacement for diagnosis after reinstall failure.
+            prefs.edit().remove("saved_hash").apply()
+            return retryOrStop("Installation recovery: $outcome", "Installation recovery failed: $outcome")
+        }
+        apkFile.delete()
 
         prefs.edit()
             .putString("saved_hash", serverHash)
@@ -175,8 +229,8 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .remove(PREF_RETRY_BLOCKED_UNTIL)
             .commit()
 
-        // Read version from server response if available (stored during fetchHashInfo)
-        val installedVersion = prefs.getString("pending_version", "") ?: ""
+        // Display the actual verified APK version rather than stale server data.
+        val installedVersion = archive?.versionName ?: ""
         if (installedVersion.isNotEmpty()) {
             prefs.edit().putString("last_installed_version", installedVersion).apply()
         }
@@ -184,9 +238,15 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         setStatus(STATE_UPDATED, "Update installed!${if (installedVersion.isNotEmpty()) " v$installedVersion" else ""} Relaunching app…")
         log("Install successful! Relaunching $packageName")
 
-        launchApp(packageName, true)
+        IvendKioskGuardian.enforce(applicationContext, "update successful", force = true)
         return Result.success()
     }
+
+    @Suppress("DEPRECATION")
+    private fun isTargetInstalled(packageName: String): Boolean = try {
+        applicationContext.packageManager.getPackageInfo(packageName, 0)
+        true
+    } catch (_: PackageManager.NameNotFoundException) { false }
 
     private fun retryOrStop(message: String, logMessage: String): Result {
         val completedAttempt = runAttemptCount + 1
@@ -278,60 +338,6 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun launchApp(packageName: String, isAfterInstall: Boolean = true) {
-        if (isAfterInstall) {
-            // Give the system time to register the updated package after pm install
-            log("Waiting 10s for package registration…")
-            Thread.sleep(10000)
-        }
-
-        // On Android 12+, startActivity() from a background WorkManager worker is blocked.
-        // Since the device is rooted, we use `su` shell commands to launch the app.
-        // Multiple strategies with fallbacks:
-
-        // Strategy 1: `monkey` — the most reliable way to force-launch any app via root
-        log("Launch attempt 1: monkey -p $packageName")
-        val r1 = rootExec("monkey -p $packageName -c android.intent.category.LAUNCHER 1")
-        log("monkey result: $r1")
-
-        if ("error" in r1.lowercase() || "exception" in r1.lowercase() || r1.isBlank()) {
-            // Strategy 2: `am start` targeting the specific package activity
-            log("Launch attempt 2: am start -n $packageName/.MainActivity")
-            val r2 = rootExec("am start -n $packageName/.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER --activity-clear-top --activity-new-task")
-            log("am start result: $r2")
-        }
-
-        // Strategy 3: always also press HOME — since IvendApp is the home launcher,
-        // this ensures it comes to the foreground
-        Thread.sleep(2000)
-        log("Launch attempt 3: HOME key press")
-        val r3 = rootExec("input keyevent 3")
-        log("HOME key result: $r3")
-    }
-
-    private fun rootExec(command: String): String {
-        return try {
-            val process = ProcessBuilder("su")
-                .redirectErrorStream(true)
-                .start()
-            java.io.DataOutputStream(process.outputStream).use { os ->
-                os.writeBytes("$command\n")
-                os.writeBytes("exit\n")
-                os.flush()
-            }
-            val output = process.inputStream.use { String(it.readBytes()).trim() }
-            val finished = process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                "TIMEOUT"
-            } else {
-                val exit = process.exitValue()
-                if (output.isNotEmpty()) "$output (exit=$exit)" else "exit=$exit"
-            }
-        } catch (e: Exception) {
-            "EXCEPTION: ${e.message}"
-        }
-    }
 
     private fun setStatus(state: String, message: String, progress: Int = -1) {
         prefs.edit()
@@ -342,19 +348,5 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .apply()
     }
 
-    private fun log(message: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val entry = JSONObject().put("t", time).put("m", message).toString()
-
-        val existing = prefs.getString("status_log", "[]") ?: "[]"
-        val arr = try { JSONArray(existing) } catch (_: Exception) { JSONArray() }
-
-        // Keep last 20 entries
-        val newArr = JSONArray()
-        val start = if (arr.length() >= 19) 1 else 0
-        for (i in start until arr.length()) newArr.put(arr.get(i))
-        newArr.put(JSONObject(entry))
-
-        prefs.edit().putString("status_log", newArr.toString()).apply()
-    }
+    private fun log(message: String) = UpdaterLog.append(applicationContext, message)
 }

@@ -5,6 +5,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+fun String.asBuildConfigString(): String =
+    "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+val vmmcLogToken = providers.environmentVariable("VMMC_LOG_TOKEN").orElse("").get()
+
 android {
     namespace = "com.example.vmivendappupdater"
     compileSdk = flutter.compileSdkVersion
@@ -28,6 +33,16 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        buildConfigField(
+            "String",
+            "VMMC_LOG_UPLOAD_URL",
+            "https://machine.ivend.cloud/v1/logs".asBuildConfigString()
+        )
+        buildConfigField("String", "VMMC_LOG_TOKEN", vmmcLogToken.asBuildConfigString())
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -44,6 +59,9 @@ flutter {
 }
 
 dependencies {
+    implementation("androidx.activity:activity:1.8.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 }
