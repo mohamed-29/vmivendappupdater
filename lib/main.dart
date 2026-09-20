@@ -134,7 +134,7 @@ class _StatusScreenState extends State<StatusScreen> {
         : 'Never';
 
     return SafeArea(
-      child: Column(
+      child: SingleChildScrollView(child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── Header ──────────────────────────────────────────────────────
@@ -184,6 +184,20 @@ class _StatusScreenState extends State<StatusScreen> {
           ),
           // ── Log title ───────────────────────────────────────────────────
           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Card(child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Kiosk\n${_status['kioskMessage'] ?? 'Checking kiosk setup…'}\n${_status['healthMessage'] ?? ''}\n\nUpdater self-update\n${_status['selfMessage'] ?? 'Waiting for check.'}'),
+            )),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Card(child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Device usage\n${_status['resourceUsage'] ?? 'Waiting for CPU, RAM and storage sample…'}'),
+            )),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: Row(
               children: [
@@ -204,7 +218,8 @@ class _StatusScreenState extends State<StatusScreen> {
             ),
           ),
           // ── Log list ────────────────────────────────────────────────────
-          Expanded(
+          Padding(
+            padding: EdgeInsets.zero,
             child: logs.isEmpty
                 ? Center(
                     child: Text(
@@ -216,6 +231,8 @@ class _StatusScreenState extends State<StatusScreen> {
                     ),
                   )
                 : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     itemCount: logs.length,
                     itemBuilder: (ctx, i) {
@@ -256,7 +273,7 @@ class _StatusScreenState extends State<StatusScreen> {
                   ),
           ),
         ],
-      ),
+      )),
     );
   }
 
@@ -525,7 +542,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
         setState(() {
           _checkUrlCtrl.text = (config['checkUrl'] as String?) ?? '';
           _downloadUrlCtrl.text = (config['downloadUrl'] as String?) ?? '';
-          _packageCtrl.text = (config['packageName'] as String?) ?? '';
+          _packageCtrl.text = (config['packageName'] as String?) ?? 'ivend.cloud';
           _updateAutomaticCheckUrl();
           _savedHash = (config['savedHash'] as String?) ?? '';
           _intervalMinutes = (config['checkIntervalMinutes'] as int?) ?? 360;
@@ -753,7 +770,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
             Text(
               'Check runs every ${_intervalOptions[_intervalMinutes] ?? '$_intervalMinutes min'} when network is available.\n'
               'Install is silent via root — no prompt after first Magisk grant.\n'
-              'A confirmed install failure triggers uninstall and reinstall. This removes private iVend data.\n'
+              'Recovery uses the saved APK. A rejected recovery install triggers uninstall and reinstall. This removes private iVend data.\n'
               'Open the Status tab to watch live progress.',
               style: TextStyle(
                 fontSize: 12,

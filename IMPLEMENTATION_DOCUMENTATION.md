@@ -141,7 +141,7 @@ The updater now protects `com.ivendapp/.MainActivity` as follows:
 2. It resolves Android's current default HOME activity.
 3. If HOME is not `com.ivendapp`, the condition is treated as a crucial error.
 4. A deduplicated `home_app_changed` diagnostic event is queued.
-5. Pending diagnostics are offered to the VMMC uploader.
+5. Diagnostics remain in the bounded local history.
 6. The updater repeatedly assigns iVend as HOME.
 7. The updater immediately launches or brings iVend back to the foreground.
 8. HOME assignment continues to be checked during APK-update maintenance.
@@ -222,34 +222,19 @@ The updater treats the following events as crucial:
 - Uncertain or duplicate transaction state.
 - Promotion recovery failures.
 
-Sensitive information such as authorization values, tokens, card details, FCRN data, payment identifiers, and QR-related secrets is redacted before diagnostic data is stored or transmitted.
+Sensitive information such as authorization values, tokens, card details, FCRN data, payment identifiers, and QR-related secrets is redacted before diagnostic data is stored locally.
 
 Queued events use fingerprints to prevent identical entries from filling the queue repeatedly.
 
-## 13. VMMC Log Upload Integration
+## 13. Local diagnostics only
 
-The updater integrates with:
-
-```text
-POST https://machine.ivend.cloud/v1/logs
-```
-
-Authentication is injected at build time through the `VMMC_LOG_TOKEN` environment variable. The production token is intentionally not stored in this documentation or committed as source code.
-
-The request uses a named UTF-8 JSON file and the dedicated `X-Log-Token` header. HTTP `201` is treated as success, and HTTP `409` is treated as an already-uploaded success. Failed uploads remain queued and retry after five minutes.
-
-### Current limitation
-
-The machine can reach the update service and download APK files, but the VMMC diagnostic endpoint is still rejecting or failing uploads. Switching from Bearer authorization to `X-Log-Token` did not resolve the issue. Crucial events remain safely queued and retries continue automatically.
-
-The client currently records only that an upload failed; it does not expose the HTTP status or response body. A useful next improvement is to safely record the numeric HTTP response code, without recording the token or sensitive response content. A synthetic production log was not created because that would add real server data without explicit approval.
+As of updater 1.0.13, all diagnostic uploading is removed. No upload client, endpoint, token build configuration, or upload retry loop is included. The bounded local diagnostic history and live status screen remain available for troubleshooting.
 
 ## 14. Build and Verification
 
 The release build is produced with:
 
 ```powershell
-$env:VMMC_LOG_TOKEN = '<production token supplied securely>'
 .\tools\build-release.ps1
 ```
 
@@ -319,7 +304,6 @@ The implementation involved the following updater source areas:
 - `ManagedAppReceiver.kt`: Immediate package-event recovery.
 - `CriticalDiagnostics.kt`: Crucial-event classification, redaction, and queueing.
 - `CrashDiagnostics.kt`: Native-crash and ANR detection.
-- `DiagnosticLogUploader.kt`: Authenticated queued VMMC upload and retries.
 - Related Kotlin unit tests: Root, recovery, diagnostics, API request, and validation behavior.
 
 ## 17. Changes to IvendApp-master
@@ -348,4 +332,4 @@ At the end of testing:
 - HOME mismatch detection and recovery passed a controlled live test.
 - Crucial HOME mismatch logging is active.
 - Update checking reports that the application is up to date.
-- VMMC diagnostic uploads remain queued because the endpoint continues to reject or fail the requests.
+- Diagnostic uploading was removed in 1.0.13; historical local entries are not uploaded.

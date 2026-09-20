@@ -13,6 +13,10 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
 
+        <provider android:name=".KioskControlProvider"
+            android:authorities="com.example.vmivendappupdater.kiosk"
+            android:exported="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -45,11 +49,16 @@
             android:name=".UpdateProgressActivity"
             android:launchMode="singleTask"
             android:lockTaskMode="if_whitelisted"
-            android:exported="false"
+            android:exported="true"
             android:theme="@style/UpdateProgressTheme"
             android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity="" />
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- Foreground service to keep the updater alive -->
         <service
@@ -61,6 +70,7 @@
         </service>
 
         <!-- Start on boot and when the updater itself gets updated -->
+        <receiver android:name=".SelfInstallReceiver" android:exported="false" />
         <receiver android:name=".KioskAdminReceiver" android:exported="true"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
             <meta-data android:name="android.app.device_admin" android:resource="@xml/kiosk_admin" />
@@ -107,6 +117,9 @@
 
     <queries>
         <package android:name="com.ivendapp" />
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />

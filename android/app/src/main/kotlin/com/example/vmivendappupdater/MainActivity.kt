@@ -13,11 +13,11 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
 
         val prefs = getSharedPreferences("updater_prefs", Context.MODE_PRIVATE)
+        ManagedTarget.initialize(this)
         migrateLegacyWorkQueue(this)
         scheduleUpdates(this)
-        // An administrator can still open this configuration screen. Kiosk
-        // enforcement resumes automatically after this short, bounded window.
-        IvendKioskGuardian.beginMaintenance(this, durationMs = 5 * 60 * 1000L)
+        // Opening the updater does not suspend kiosk enforcement. Operators
+        // reach configuration during the window requested by iVend Settings.
         UpdateForegroundService.start(this)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -35,7 +35,9 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         prefs.edit()
-                            .putString("check_url", call.argument<String>("checkUrl") ?: "")
+                            .putString("check_url", call.argument<String>("checkUrl").orEmpty().let {
+                                if (it.isBlank() || it.startsWith(ManagedTarget.CHECK_PREFIX)) ManagedTarget.checkUrl(targetName) else it
+                            })
                             .putString("target_name", targetName)
                             .putString("target_package", ManagedTarget.DEFAULT_PACKAGE)
                             .putString("download_url", call.argument<String>("downloadUrl") ?: "")
@@ -60,6 +62,7 @@ class MainActivity : FlutterActivity() {
 
                     "checkNow" -> {
                         enqueueImmediateUpdate(this, ignoreCooldown = true)
+                        enqueueImmediateSelfUpdate(this)
                         result.success(true)
                     }
 
@@ -74,7 +77,12 @@ class MainActivity : FlutterActivity() {
                     "getStatus" -> {
                         result.success(
                             mapOf(
+                                "resourceUsage" to ResourceMonitor.display(),
+                                "healthMessage" to IvendKioskGuardian.healthMessage,
                                 "state" to (prefs.getString("status_state", "idle") ?: "idle"),
+                                "kioskMessage" to prefs.getString("kiosk_status", "Checking kiosk setup…"),
+                                "selfMessage" to prefs.getString("self_status_message", "Waiting for updater check."),
+                                "selfState" to prefs.getString("self_status_state", "idle"),
                                 "message" to (prefs.getString("status_message", "Waiting for first check.") ?: ""),
                                 "statusTime" to prefs.getLong("status_time", 0L).toString(),
                                 "lastCheckTime" to prefs.getLong("last_check_time", 0L).toString(),
@@ -94,6 +102,7 @@ class MainActivity : FlutterActivity() {
         val checkUrl = prefs.getString("check_url", "") ?: ""
         if (checkUrl.isNotEmpty()) {
             enqueueImmediateUpdate(this)
+            enqueueImmediateSelfUpdate(this)
         }
     }
 }

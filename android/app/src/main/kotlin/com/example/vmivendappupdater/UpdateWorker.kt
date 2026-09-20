@@ -14,18 +14,18 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     companion object {
         private val client = OkHttpClient.Builder()
+            .callTimeout(5, TimeUnit.MINUTES)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(300, TimeUnit.SECONDS)
             .build()
-        private val workerRunning = AtomicBoolean(false)
         private const val MAX_ATTEMPTS = 3
         const val KEY_IGNORE_COOLDOWN = "ignore_retry_cooldown"
+        const val KEY_FORCE_REINSTALL = "force_reinstall"
         const val PREF_RETRY_BLOCKED_UNTIL = "retry_blocked_until"
 
         const val STATE_IDLE = "idle"
@@ -43,9 +43,10 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     override suspend fun doWork(): Result {
-        if (!workerRunning.compareAndSet(false, true)) {
-            return Result.success()
+        if (UpdateRunLock.isLocked) {
+            setStatus(STATE_IDLE, "iVend update queued behind the current operation; it will continue automatically when that operation finishes.")
         }
+        UpdateRunLock.acquire()
         return try {
             withContext(Dispatchers.IO) { runUpdateCycle() }
         } catch (error: CancellationException) {
@@ -53,15 +54,20 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         } catch (error: Exception) {
             retryOrStop("Update interrupted: ${error.javaClass.simpleName}", "Update cycle failed: ${error.javaClass.simpleName}")
         } finally {
-            workerRunning.set(false)
+            UpdateRunLock.release()
         }
     }
 
     private fun runUpdateCycle(): Result {
+        if (prefs.getString(SelfUpdateWorker.PREF_PENDING_HASH, "").orEmpty().isNotBlank()) {
+            setStatus(STATE_IDLE, "Waiting for updater installation to finish.")
+            return Result.retry()
+        }
         // Maintain iVend as the visible kiosk app even if an update check fails.
         IvendKioskGuardian.enforce(applicationContext, "update check")
         val blockedUntil = prefs.getLong(PREF_RETRY_BLOCKED_UNTIL, 0L)
         val ignoreCooldown = inputData.getBoolean(KEY_IGNORE_COOLDOWN, false)
+        val forceReinstall = inputData.getBoolean(KEY_FORCE_REINSTALL, false) || prefs.getBoolean("recovery_pending", false)
         if (!ignoreCooldown && System.currentTimeMillis() < blockedUntil) {
             return Result.success()
         }
@@ -77,8 +83,15 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         setStatus(STATE_CHECKING, "Checking for updates…")
         log("Contacting server: $checkUrl")
 
+        val recoveryApk = File(applicationContext.filesDir, "last-ivend.apk")
+        val recoveryHash = prefs.getString("last_apk_hash", "").orEmpty()
+        val useLocal = forceReinstall && recoveryHash.isNotBlank() && recoveryApk.isFile &&
+            sha256(recoveryApk).equals(recoveryHash, ignoreCase = true)
         val (serverHash, downloadUrl) = try {
-            fetchHashInfo(checkUrl)
+            if (useLocal) {
+                log("Repairing from the last verified APK saved on this machine (no network needed).")
+                Pair(recoveryHash, "")
+            } else fetchHashInfo(checkUrl)
         } catch (e: Exception) {
             setStatus(STATE_ERROR, "Server unreachable: ${e.message}")
             log("Error: ${e.message}")
@@ -91,7 +104,7 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         log("Server hash: ${serverHash.take(16)}…")
 
-        if (serverHash.equals(savedHash, ignoreCase = true) && isTargetInstalled(packageName)) {
+        if (RecoveryPolicy.isUpToDate(serverHash, savedHash, isTargetInstalled(packageName), forceReinstall)) {
             setStatus(STATE_UP_TO_DATE, "App is up to date.")
             log("Hash matches — no update needed.")
             prefs.edit()
@@ -101,10 +114,10 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.success()
         }
 
-        log("New hash detected — starting download.")
+        log(if (forceReinstall) "Recovery requested — verifying the current release." else "New hash detected — starting download.")
         setStatus(STATE_DOWNLOADING, "Downloading update…", progress = 0)
 
-        val apkFile = File(applicationContext.filesDir, "update.apk")
+        val apkFile = if (useLocal) recoveryApk else File(applicationContext.filesDir, "update.apk")
         val partialFile = File(applicationContext.filesDir, "update.apk.part")
         val cachedVerified = apkFile.isFile && sha256(apkFile).equals(serverHash, ignoreCase = true)
         if (!cachedVerified) {
@@ -188,23 +201,44 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 "APK validation failed: $reason; installed app retained."
             )
         }
+        if (KioskSession.active(applicationContext, "operator")) {
+            setStatus(STATE_IDLE, "Update downloaded. Waiting for operator maintenance to finish.")
+            return Result.retry()
+        }
+        // Retain the verified replacement even after a successful install. It is
+        // the offline repair source when the newly installed app cannot start.
+        if (!useLocal) {
+            apkFile.copyTo(recoveryApk, overwrite = true)
+            prefs.edit().putString("last_apk_hash", serverHash).commit()
+        }
+        // Normal updates wait for iVend to confirm that vending is idle. A
+        // recovery reinstall is only requested after iVend repeatedly failed to
+        // stay open, so waiting for that broken app would deadlock recovery.
+        val needsAppApproval = isTargetInstalled(packageName) && !forceReinstall
+        if (needsAppApproval && !AppUpdateGate.prepare(applicationContext)) {
+            setStatus(STATE_IDLE, AppUpdateGate.waitingMessage(applicationContext))
+            return Result.retry()
+        }
         setStatus(STATE_INSTALLING, "Installing update via root…")
         log("Running: pm install -r ${apkFile.absolutePath}")
-        // Do not let the 10-second guardian heartbeat replace the controlled
-        // update screen while package-manager stops iVend.
-        IvendKioskGuardian.beginMaintenance(applicationContext, 6 * 60 * 1000L)
+        // Keep the recovery screen visible while package-manager stops iVend.
 
         // Show the "Installing Update" screen BEFORE the install so users see our
         // progress screen instead of the Android default launcher when IvendApp gets killed
+        var installSucceeded = false
         val outcome = try {
+            IvendKioskGuardian.beginMaintenance(applicationContext, 6 * 60 * 1000L)
             log("Showing update progress screen…")
-            val cover = RootShell.run("am start -W -n com.example.vmivendappupdater/.UpdateProgressActivity -f 0x14000000")
-            if (!cover.succeeded || cover.output.contains("Error:")) {
+            KioskPolicy.configure(applicationContext, packageName, KioskPolicy.homeComponent(applicationContext))
+            if (!IvendKioskGuardian.awaitRecovery(applicationContext)) {
                 return retryOrStop("Could not open recovery screen.", "Install deferred: recovery screen unavailable.")
             }
-            RootInstaller.install(apkFile.absolutePath, packageName, ::log)
+            RootInstaller.install(apkFile.absolutePath, packageName, ::log, forceReinstall).also {
+                installSucceeded = it == InstallRecovery.Outcome.UPDATED || it == InstallRecovery.Outcome.REINSTALLED
+            }
         } finally {
-            IvendKioskGuardian.endMaintenance(applicationContext, "install attempt")
+            if (needsAppApproval) AppUpdateGate.finish(applicationContext)
+            IvendKioskGuardian.endMaintenance(applicationContext, "install attempt", installSucceeded)
         }
 
         val targetStillInstalled = isTargetInstalled(packageName)
@@ -215,13 +249,12 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     "update_left_app_missing",
                     "Update recovery ended with $outcome and $packageName is not installed."
                 )
-                DiagnosticLogUploader.uploadPending(applicationContext)
             }
             // Retain the validated replacement for diagnosis after reinstall failure.
             prefs.edit().remove("saved_hash").apply()
             return retryOrStop("Installation recovery: $outcome", "Installation recovery failed: $outcome")
         }
-        apkFile.delete()
+        if (!useLocal) apkFile.delete()
 
         prefs.edit()
             .putString("saved_hash", serverHash)

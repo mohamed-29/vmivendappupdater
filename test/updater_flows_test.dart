@@ -27,6 +27,9 @@ void main() {
                 'message': 'Current state',
                 'log': logs,
                 'downloadProgress': 42,
+                'selfMessage': 'Android rejected installation: signature mismatch',
+                'resourceUsage': 'CPU (whole device): 12.0%\nRAM: 300 MiB / 1.0 GiB\nInternal storage: 2.0 GiB / 8.0 GiB',
+                'healthMessage': 'Health check inconclusive; retry in 4s. No restart requested.',
               };
             case 'getConfig':
               return {
@@ -67,6 +70,20 @@ void main() {
     logs = '{invalid json';
     await open(tester);
     expect(find.text('No activity yet.'), findsOneWidget);
+    expect(find.textContaining('signature mismatch'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await close(tester);
+  });
+
+  testWidgets('device usage and unknown health remain readable on small screens', (tester) async {
+    tester.view.physicalSize = const Size(480, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await open(tester);
+    expect(find.textContaining('No restart requested.'), findsOneWidget);
+    expect(find.textContaining('CPU (whole device): 12.0%'), findsOneWidget);
+    await tester.ensureVisible(find.textContaining('CPU (whole device): 12.0%'));
     expect(tester.takeException(), isNull);
     await close(tester);
   });
@@ -106,6 +123,12 @@ void main() {
       tester.widget<TextField>(find.byType(TextField).first).controller!.text,
       'https://machine.ivend.cloud/api/v1/updates/check/release%20candidate%204/',
     );
+    await tester.ensureVisible(find.text('Save & Schedule'));
+    await tester.tap(find.text('Save & Schedule'));
+    await tester.pumpAndSettle();
+    final saved = calls.singleWhere((call) => call.method == 'saveConfig');
+    expect(saved.arguments['packageName'], 'release candidate 4');
+    expect(saved.arguments['checkUrl'], 'https://machine.ivend.cloud/api/v1/updates/check/release%20candidate%204/');
     await close(tester);
   });
 

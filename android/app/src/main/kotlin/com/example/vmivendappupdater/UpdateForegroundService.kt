@@ -42,8 +42,13 @@ class UpdateForegroundService : Service() {
         createNotificationChannel()
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
+        ResourceMonitor.start(this)
+        checkAfterUpdaterUpgrade(this)
         guardianTask = guardianExecutor.scheduleWithFixedDelay(
-            { IvendKioskGuardian.enforce(this, "background health check") },
+            {
+                runCatching { SelfInstall.reconcile(this) }
+                IvendKioskGuardian.enforce(this, "background health check")
+            },
             0,
             2,
             TimeUnit.SECONDS
@@ -64,6 +69,7 @@ class UpdateForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        ResourceMonitor.stop()
         guardianTask?.cancel(true)
         guardianExecutor.shutdownNow()
         super.onDestroy()

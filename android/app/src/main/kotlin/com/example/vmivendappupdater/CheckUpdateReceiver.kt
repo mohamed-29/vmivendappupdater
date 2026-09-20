@@ -12,6 +12,7 @@ class CheckUpdateReceiver : BroadcastReceiver() {
             Log.i("CheckUpdateReceiver", "Received check update broadcast — enqueuing immediate check")
 
             enqueueImmediateUpdate(context)
+            enqueueImmediateSelfUpdate(context)
         }
     }
 

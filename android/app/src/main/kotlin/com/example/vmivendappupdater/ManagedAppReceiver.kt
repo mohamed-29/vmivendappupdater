@@ -20,11 +20,10 @@ class ManagedAppReceiver : BroadcastReceiver() {
                         "managed_app_missing",
                         "Managed HOME application $targetPackage was removed. Immediate recovery started."
                     )
-                    DiagnosticLogUploader.uploadPending(context)
                     enqueueImmediateUpdate(context, ignoreCooldown = true)
                 }
                 if (intent.action != Intent.ACTION_PACKAGE_REMOVED || !replacing) {
-                    IvendKioskGuardian.endMaintenance(
+                    IvendKioskGuardian.enforce(
                         context,
                         "managed package event ${intent.action?.substringAfterLast('.')}"
                     )

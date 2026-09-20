@@ -9,7 +9,7 @@ All implementation changes are in `vmivendappupdater-main`. The iVend project is
 3. A confirmed package-manager installation failure triggers `pm uninstall com.ivendapp`, followed by installation of that same local APK. This deletes private app data. Root denial and ambiguous command timeouts do not trigger uninstall.
 4. Failed reinstall is reported as failure, retains the APK, and retains the recovery screen. A later update attempt can reuse a matching verified APK. No successful hash is stored until the package is installed.
 5. HOME and foreground checks run from the updater service, with a nominal 10-second delay between completed checks. Slow root commands can increase this interval. Configuration access has a five-minute maintenance window; installation has a six-minute window.
-6. Native Java crashes are filtered by iVend's PID. Caught React render errors are read from iVend's own log. Up to ten diagnostic snapshots are retained privately. Upload remains disabled until the API contract and credentials are supplied.
+6. Native Java crashes are filtered by iVend's PID. Caught React render errors are read from iVend's own log. Up to ten diagnostic snapshots are retained privately. Upload functionality was removed in 1.0.13.
 
 ## Review findings and limitations
 
